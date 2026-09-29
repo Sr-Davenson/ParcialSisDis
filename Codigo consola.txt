@@ -1,0 +1,5 @@
+# Coordinador
+node .\coordinador\index.js 3000 https://chatting-sustained-punctured.ngrok-free.dev/
+
+# Worker (propio)
+node .\worker\Index.js 3000 https://chatting-sustained-punctured.ngrok-free.dev/
