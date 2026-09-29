@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel Miniserver - Gregorio Samsa</title>
+    <link rel="stylesheet" href="worker-styles.css">
+</head>
+<body>
+
+    <div class="container">
+        <header>
+            <div class="header-controls">
+                <h1>Miniserver Control</h1>
+                <div class="pulse-buttons">
+                    <button id="btn-apagar" class="danger" disabled>Detener Pulsos</button>
+                    <button id="btn-reconectar" class="accent" style="display: none;">Reconectar Pulsos</button>
+                </div>
+            </div>
+            
+            <!-- Gregorio Samsa Mascot -->
+            <div class="roach-zone">
+                <div class="roach">
+                    <div class="hat"></div>
+                    <div class="antenna left"></div>
+                    <div class="antenna right"></div>
+                    <div class="leg l1"></div>
+                    <div class="leg l2"></div>
+                    <div class="leg l3"></div>
+                    <div class="leg r1"></div>
+                    <div class="leg r2"></div>
+                    <div class="leg r3"></div>
+                    <div class="wing left"></div>
+                    <div class="wing right"></div>
+                    <div class="roach-body"></div>
+                    <div class="roach-head">
+                        <div class="eye one"></div>
+                        <div class="eye two"></div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <main>
+            <!-- Conexión actual: a qué coordinador (padre) estamos pegados -->
+            <section class="card-section">
+                <h2>Conexión actual</h2>
+                <div id="connection-info" class="info-grid">
+                    <div class="info-item"><span class="info-value">Cargando...</span></div>
+                </div>
+                <div id="connection-extra" class="info-extra"></div>
+            </section>
+
+            <!-- Configuración del Registro -->
+            <section class="card-section">
+                <h2>Conectar a Middleware</h2>
+                <div class="form-grid">
+<input type="text" id="server-name" placeholder="Nombre del servidor (ej: Hijo1)">
+    <input type="text" id="parent-url" placeholder="URL del Padre / Middleware (http://...)">
+                    
+                </div>
+                <button id="btn-register" class="accent">Registrar Servidor</button>
+                <div id="status-register" class="status-box"></div>
+            </section>
+
+            <!-- Envío de Mensajes -->
+            <section class="card-section">
+                <h2>Enviar Mensaje</h2>
+                <div class="input-section">
+                    <input 
+                        type="text" 
+                        id="input-mensaje" 
+                        placeholder="Escribe un mensaje para transmitir..." 
+                        autocomplete="off"
+                    >
+                    <button id="btn-enviar" class="primary">Enviar</button>
+                </div>
+            </section>
+
+            <!-- Historial de Mensajes -->
+            <section class="messages-section">
+                <h2>Historial Local</h2>
+                <ul id="lista-mensajes"></ul>
+            </section>
+        </main>
+    </div>
+
+    <script src="worker-app.js"></script>
+</body>
+</html>

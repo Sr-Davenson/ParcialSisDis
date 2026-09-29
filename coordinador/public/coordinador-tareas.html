@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asignar tareas</title>
+    <link rel="stylesheet" href="/coordinador-styles.css">
+</head>
+<body>
+    <div class="container">
+        <nav>
+            <a href="/">🏠 Inicio</a>
+            <a href="/servers">🖥️ Servidores</a>
+            <a href="/monitor">📊 Monitor</a>
+            <a href="/logs">📋 Logs</a>
+            <a href="/messages">💬 Mensajes</a>
+            <a href="/election">🗳️ Elección</a>
+            <a href="/panel">🪳 Panel Miniserver</a>
+        </nav>
+
+        <h1>🧮 Asignar tareas</h1>
+        <div id="leader-banner" class="status-box" style="margin-bottom: 20px;"></div>
+
+        <section class="card-section">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+                <h2 style="margin:0;">Workers y capacidades</h2>
+                <button id="btn-refresh-caps" class="primary small">Actualizar capacidades</button>
+            </div>
+            <div id="workers-table"><p>No hay workers registrados.</p></div>
+        </section>
+
+        <section class="card-section">
+            <h2>Nueva tarea</h2>
+
+            <div class="task-row">
+                <label>
+                    <span class="field-label">Tipo de tarea</span>
+                    <select id="task-type">
+                        <option value="math_compute">math_compute — calculadora</option>
+                        <option value="http_fetch">http_fetch — GET a una URL</option>
+                        <option value="search_text">search_text — contar coincidencias</option>
+                        <option value="stats_compute">stats_compute — promedio, mín y máx</option>
+                        <option value="vector_distance">vector_distance — distancia 2D</option>
+                        <option value="http_latency">http_latency — latencia de una URL</option>
+                        <option value="text_transform">text_transform — mayúsculas, minúsculas o invertir</option>
+                    </select>
+                </label>
+                <label>
+                    <span class="field-label">Worker</span>
+                    <select id="task-worker"></select>
+                </label>
+            </div>
+
+            <div id="task-fields" class="task-row"></div>
+
+            <button id="btn-assign" class="accent">Asignar tarea</button>
+            <div id="assign-status" class="status-box"></div>
+        </section>
+
+        <section class="card-section">
+            <h2>Tareas</h2>
+            <div id="tasks-table"><p>Todavía no hay tareas.</p></div>
+        </section>
+    </div>
+
+    <script src="/coordinador-tareas.js"></script>
+</body>
+</html>
