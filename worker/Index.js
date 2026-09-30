@@ -139,11 +139,18 @@ function startPulse() {
             fails++;
             lastPulseError = error.message;
             const status = error.response && error.response.status;
+            const errData = error.response && error.response.data;
             console.log(`Fallo al enviar pulso (${fails}/${PULSE_RETRIES}): ` + error.message);
 
-            // 404 = el coordinador respondió pero no nos conoce (se reinició y perdió
-            // su lista de workers). Nos volvemos a registrar en la misma URL de inmediato.
-            if (status === 404) {
+            if (errData && errData.redirect && errData.leaderUrl && errData.leaderUrl !== MIDLEWARE_URL) {
+                console.log(`[${NAME}] ${MIDLEWARE_URL} no es el líder, redirigiendo a ${errData.leaderUrl}...`);
+                try {
+                    await registerWithMiddleware(errData.leaderUrl, SELF_URL);
+                    console.log(`[${NAME}] Mudo con éxito a ${errData.leaderUrl}`);
+                } catch (err) {
+                    console.log("No se pudo mudar al nuevo líder: " + err.message);
+                }
+            } else if (status === 404) {
                 console.log(`[${NAME}] ${MIDLEWARE_URL} no nos reconoce, re-registrando...`);
                 try {
                     await registerWithMiddleware(MIDLEWARE_URL, SELF_URL);

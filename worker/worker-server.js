@@ -84,12 +84,18 @@ function startPulse() {
         } catch (error) {
             fails++;
             lastPulseError = error.message;
+            const errData = error.response && error.response.data;
             console.log(`Fallo al enviar pulso (${fails}/${PULSE_RETRIES}): ` + error.message);
 
-            // Tras PULSE_RETRIES fallas seguidas asumimos que el administrador
-            // actual se cayó de verdad: preguntamos a los demás admins que
-            // conocemos quién es el líder ahora y nos mudamos solos.
-            if (fails >= PULSE_RETRIES) {
+            if (errData && errData.redirect && errData.leaderUrl && errData.leaderUrl !== MIDLEWARE_URL) {
+                console.log(`[${NAME}] ${MIDLEWARE_URL} no es el líder, redirigiendo a ${errData.leaderUrl}...`);
+                try {
+                    await registerWithMiddleware(errData.leaderUrl, SELF_URL);
+                    console.log(`[${NAME}] Mudo con éxito a ${errData.leaderUrl}`);
+                } catch (err) {
+                    console.log("No se pudo mudar al nuevo líder: " + err.message);
+                }
+            } else if (fails >= PULSE_RETRIES) {
                 fails = 0;
                 const newLeaderUrl = await findCurrentLeader();
                 if (newLeaderUrl && newLeaderUrl !== MIDLEWARE_URL) {

@@ -1,19 +1,5 @@
 require("dotenv").config();
-
-function normalizeUrl(url) {
-    if (!url) return ""
-    let clean = String(url).trim()
-    while (clean.endsWith("/")) clean = clean.slice(0, -1)
-    return clean
-}
-
-// Todos los IDs que entran por red pasan por acá antes de guardarse
-function normalizeId(id) {
-    if (id === null || id === undefined) return null
-    const clean = String(id).trim().toUpperCase()
-    return clean || null
-}
-
+const PUBLIC_URL = (process.env.PUBLIC_URL  || `https://chatting-sustained-punctured.ngrok-free.dev` ).replace(/\/+/,"")
 const express = require("express")
 const axios = require("axios")
 const path = require("path")
@@ -22,7 +8,7 @@ const app = express()
 app.use(express.json())
 
 // Permite utilizar los archivos de la carpeta public
-app.use(express.static(path.join(__dirname, "public")))
+app.use(express.static("public"))
 
 // Panel de control de este nodo (interfaz.html + app.js + styles.css).
 // Necesita que esos 3 archivos estén dentro de la carpeta "public".
@@ -30,50 +16,7 @@ app.get("/panel", (req, res) => {
     res.sendFile(path.join(__dirname, "public", "interfaz.html"))
 })
 
-// Alias: cualquier HTML que ya enlace "/styles.css" (por ejemplo tu interfaz.html
-// del /panel) sigue funcionando después de renombrar el CSS.
-app.get("/styles.css", (req, res) => {
-    res.sendFile(path.join(__dirname, "public", "coordinador-styles.css"))
-})
-
-// Puerto: argumento CLI > variable de entorno > 3000
-const PORT = Number(process.argv[2]) || Number(process.env.PORT) || 3000
-
-// ==========================================
-// ELECCIÓN - IDENTIDAD Y ESTADO DEL NODO
-// ==========================================
-// Uso manual (tipo worker):
-//   node index.js {PUERTO} {URL_NGROK} [PEERS]
-//   Ej: node index.js 3000 https://chatting-sustained-punctured.ngrok-free.dev
-//
-// Uso completo tradicional:
-//   node index.js {PUERTO} {NODE_ID} {URL_PROPIA} [PEERS]
-//   Ej: node index.js 3000 A http://localhost:3000
-const arg3 = process.argv[3] || ""
-const arg3IsUrl = /^https?:\/\//i.test(arg3)
-
-let NODE_ID = ""
-let SELF_URL = ""
-let SEEDS_CLI = ""
-
-if (arg3IsUrl) {
-    // Si el 3er argumento es una URL (mismo formato que el worker: node index.js 3000 URL)
-    SELF_URL = normalizeUrl(arg3)
-    NODE_ID = normalizeId(process.env.NODE_ID || `COORDINATOR-${PORT}`)
-    SEEDS_CLI = process.argv[4] || ""
-} else if (arg3) {
-    // Si el 3er argumento es el ID (formato tradicional: node index.js 3000 A URL)
-    NODE_ID = normalizeId(arg3)
-    SELF_URL = normalizeUrl(process.argv[4] || process.env.PUBLIC_URL || process.env.SELF_URL || `http://localhost:${PORT}`)
-    SEEDS_CLI = process.argv[5] || ""
-} else {
-    // Sin argumentos adicionales: leer de .env o fallback local
-    NODE_ID = normalizeId(process.env.NODE_ID || `COORDINATOR-${PORT}`)
-    SELF_URL = normalizeUrl(process.env.PUBLIC_URL || process.env.SELF_URL || `http://localhost:${PORT}`)
-    SEEDS_CLI = ""
-}
-
-const PUBLIC_URL = SELF_URL
+const PORT = Number(process.env.PORT) || Number(process.argv[2]) || 3000
 
 // ==========================================
 // ALMACENAMIENTO EN MEMORIA
@@ -89,14 +32,19 @@ let messages = []
 // Logs de actividad
 let logs = []
 
-// ---- TIEMPOS DEL SISTEMA ----
-const PING_RETRIES = 3       // pings fallidos seguidos antes de dar a un peer por caído
-const PING_INTERVAL = 2000   // cada cuánto saludamos a los peers
-const PING_TIMEOUT = 5000    // espera máxima de UN ping
 
-const PULSE_RETRIES = 3      // pulsos fallidos seguidos (lo aplica el worker, ver worker-server.js)
-const PULSE_INTERVAL = 3000  // cada cuánto pulsa un worker (lo aplica el worker)
-const PULSE_TIMEOUT = 8000   // sin pulso durante este tiempo -> el worker pasa a offline
+// ==========================================
+// ELECCIÓN - IDENTIDAD Y ESTADO DEL NODO
+// ==========================================
+// Uso:  node server.js <puerto> <id> <urlPropia> <peerSemilla1,peerSemilla2,...>
+// Ej:   node server.js 3000 A http://192.168.1.42:3000 http://192.168.1.43:3000
+
+const NODE_ID = process.env.NODE_ID || process.argv[3] || "H"
+const SELF_URL = normalizeUrl(process.env.SELF_URL || process.argv[4] || `https://chatting-sustained-punctured.ngrok-free.dev`)
+
+const PING_INTERVAL = 2000   // cada cuánto saludamos a los peers
+const PEER_TIMEOUT = 7000    // cuánta paciencia antes de darlo por caído
+const PING_TIMEOUT = 1500    // debe ser menor que PING_INTERVAL
 
 let role = "follower"        // leader | follower
 let leaderId = null
@@ -115,18 +63,23 @@ let paused = false
 // { id, url, lastSeen, alive, role }
 let peers = {}
 
+function normalizeUrl(url) {
+    if (!url) return ""
+    let clean = String(url).trim()
+    while (clean.endsWith("/")) clean = clean.slice(0, -1)
+    return clean
+}
+
 // Agrega un peer si no lo conocíamos (así funciona el chisme/gossip)
 function addPeer(url, id) {
     const key = normalizeUrl(url)
     if (!key || key === SELF_URL) return null
 
-    const normId = normalizeId(id)
-
     if (!peers[key]) {
-        peers[key] = { id: normId, url: key, lastSeen: 0, alive: false, role: null, fails: 0, pinging: false }
-        addLog("INFO", "PEER_DISCOVERED", normId || key, `Nuevo peer conocido: ${key}`)
-    } else if (normId && peers[key].id !== normId) {
-        peers[key].id = normId
+        peers[key] = { id: id || null, url: key, lastSeen: 0, alive: false, role: null }
+        addLog("INFO", "PEER_DISCOVERED", id || key, `Nuevo peer conocido: ${key}`)
+    } else if (id && peers[key].id !== id) {
+        peers[key].id = id
     }
 
     return peers[key]
@@ -135,8 +88,7 @@ function addPeer(url, id) {
 function markAlive(peer, extra) {
     if (!peer) return
     peer.lastSeen = Date.now()
-    peer.fails = 0
-    if (extra && extra.id) peer.id = normalizeId(extra.id)
+    if (extra && extra.id) peer.id = extra.id
     if (extra && extra.role) peer.role = extra.role
     if (!peer.alive) {
         peer.alive = true
@@ -296,7 +248,7 @@ function explainRemoteError(error) {
             return `El túnel ngrok del otro servidor no responde (¿está apagado o cambió de URL?) — ngrok devolvió ${status}`
         }
         if (status === 404) {
-            return `El servidor remoto respondió 404 (revisá que la URL sea del Coordinador en el puerto 3000 y no del Worker).`
+            return `El servidor remoto respondió 404 (revisá que la URL introducida sea la del Coordinador y no la del Worker).`
         }
         return `El servidor remoto respondió ${status}`
     }
@@ -686,8 +638,7 @@ app.get("/election", (req, res) => {
                 <a href="/logs">📋 Logs</a>
                 <a href="/messages">💬 Mensajes</a>
                 <a href="/election" class="active">🗳️ Elección</a>
-                <a href="/tareas">🧮 Tareas</a>
-                    <a href="/panel">🪳 Panel Miniserver</a>
+                <a href="/panel">🪳 Panel Miniserver</a>
             </nav>
 
             <div class="wrap">
@@ -924,16 +875,13 @@ app.get("/election", (req, res) => {
 
 
 // ==========================================
-// CICLO DE PING (cada PING_INTERVAL) Y DETECCIÓN DE CAÍDOS (PING_RETRIES fallos seguidos)
+// CICLO DE PING (cada 2s) Y DETECCIÓN DE CAÍDOS (7s)
 // ==========================================
 
 async function pingPeer(peer) {
     // Si me detuvieron manualmente, dejo de pulsar a todo el mundo: para
     // el resto del anillo eso se ve idéntico a que me haya caído.
-    // `pinging` evita solapar pings: con timeout (5s) > intervalo (2s) un
-    // peer lento recibiría varios pings a la vez.
-    if (paused || peer.pinging) return
-    peer.pinging = true
+    if (paused) return
 
     try {
         const { data } = await axios.post(
@@ -947,33 +895,33 @@ async function pingPeer(peer) {
         // Su respuesta también trae peers: los aprendemos
         if (data) mergePeerList(data.peers)
     } catch (error) {
-        // Un solo fallo no lo mata: hacen falta PING_RETRIES seguidos.
-        peer.fails = (peer.fails || 0) + 1
-        if (peer.alive && peer.fails >= PING_RETRIES) {
-            markPeerDown(peer)
-        }
-    } finally {
-        peer.pinging = false
+        // No lo matamos aquí: puede ir lento. Lo decide el timeout de 7s.
     }
 }
 
-function markPeerDown(peer) {
-    peer.alive = false
-    peer.role = null
-    addLog("WARNING", "PEER_DOWN", peer.id || peer.url, `Sin respuesta en ${PING_RETRIES} pings seguidos, se da por caído`)
+function checkDeadPeers() {
+    const now = Date.now()
+    Object.values(peers).forEach(peer => {
+        if (peer.alive && now - peer.lastSeen > PEER_TIMEOUT) {
+            peer.alive = false
+            peer.role = null
+            addLog("WARNING", "PEER_DOWN", peer.id || peer.url, `Sin respuesta por más de ${PEER_TIMEOUT / 1000}s, se da por caído`)
 
-    // Si el que se cayó era el líder, queda vacante (fase 3)
-    if (leaderId && peer.id === leaderId) {
-        leaderId = null
-        leaderUrl = null
-        addLog("WARNING", "LEADER_LOST", peer.id, "El líder dejó de responder")
-    }
+            // Si el que se cayó era el líder, queda vacante (fase 3)
+            if (leaderId && peer.id === leaderId) {
+                leaderId = null
+                leaderUrl = null
+                addLog("WARNING", "LEADER_LOST", peer.id, "El líder dejó de responder")
+            }
+        }
+    })
 }
 
 setInterval(async () => {
     if (!paused) {
         await Promise.all(Object.values(peers).map(pingPeer))
     }
+    checkDeadPeers()
     recomputeLeader()
 }, PING_INTERVAL)
 
@@ -1048,7 +996,7 @@ app.get("/", (req, res) => {
             <meta charset="UTF-8">
             <meta http-equiv="refresh" content="3"> <!-- Actualización en tiempo real -->
             <title>Servidor Central</title>
-            <link rel="stylesheet" href="/coordinador-styles.css">
+            <link rel="stylesheet" href="/styles.css">
         </head>
         <body>
             <header>
@@ -1076,11 +1024,6 @@ app.get("/", (req, res) => {
                         <h2>💬 Mensajes</h2>
                         <p>Consulta los mensajes recibidos.</p>
                         <a class="button" href="/messages">Ver mensajes</a>
-                    </div>
-                    <div class="card">
-                        <h2>🧮 Tareas</h2>
-                        <p>Asigna tareas a los workers y mira sus resultados.</p>
-                        <a class="button" href="/tareas">Asignar tareas</a>
                     </div>
                     <div class="card">
                         <h2>🗳️ Elección</h2>
@@ -1175,13 +1118,8 @@ app.post("/register", (req, res) => {
         name: serverName,
         url: url,
         lastHeartbeat: Date.now(),
-        status: "online",
-        capabilities: existing ? (existing.capabilities || null) : null,
-        capabilitiesDetails: existing ? (existing.capabilitiesDetails || []) : [],
-        capabilitiesError: null,
-        capabilitiesCheckedAt: 0
+        status: "online"
     }
-    refreshCapabilities(serverName)   // en segundo plano: no retrasa la respuesta del registro
 
     console.log(`Server registered successfully: ${serverName}`)
     addLog("INFO", "REGISTER", serverName, existing ? "Servidor re-registrado (reconexión)" : "Servidor registrado correctamente")
@@ -1240,10 +1178,6 @@ app.post("/pulse/:name", (req, res) => {
 
         console.log(`Pulso recibido de ${serverName}`)
 
-        if (!servers[serverName].capabilitiesBusy && Date.now() - (servers[serverName].capabilitiesCheckedAt || 0) > CAPABILITIES_REFRESH_MS) {
-            refreshCapabilities(serverName)
-        }
-
         const payload = {
             message: "Heartbeat recibido",
             server: serverName
@@ -1281,7 +1215,7 @@ app.get("/servers", (req, res) => {
             <meta charset="UTF-8">
             <meta http-equiv="refresh" content="3"> <!-- Actualización en tiempo real -->
             <title>Servidores</title>
-            <link rel="stylesheet" href="/coordinador-styles.css">
+            <link rel="stylesheet" href="/styles.css">
         </head>
         <body>
             <div class="container">
@@ -1292,7 +1226,6 @@ app.get("/servers", (req, res) => {
                     <a href="/logs">📋 Logs</a>
                     <a href="/messages">💬 Mensajes</a>
                     <a href="/election">🗳️ Elección</a>
-                    <a href="/tareas">🧮 Tareas</a>
                     <a href="/panel">🪳 Panel Miniserver</a>
                 </nav>
 
@@ -1305,11 +1238,12 @@ app.get("/servers", (req, res) => {
                         <th>Último Pulse</th>
                         <th>Estado</th>
                     </tr>
-                    ${serverList.map(server => {
-        const seconds = Math.floor((Date.now() - server.lastHeartbeat) / 1000)
-        const isOffline = server.status === "offline"
-
-        return `
+                    ${
+                        serverList.map(server => {
+                            const seconds = Math.floor((Date.now() - server.lastHeartbeat) / 1000)
+                            const isOffline = server.status === "offline"
+                            
+                            return `
                                 <tr>
                                     <td>${server.name}</td>
                                     <td>${server.url}</td>
@@ -1319,13 +1253,13 @@ app.get("/servers", (req, res) => {
                                     </td>
                                 </tr>
                             `
-    }).join("") ||
-        `
+                        }).join("") ||
+                        `
                             <tr>
                                 <td colspan="4">No hay servidores registrados.</td>
                             </tr>
                         `
-        }
+                    }
                 </table>
             </div>
         </body>
@@ -1350,7 +1284,7 @@ app.get("/monitor", (req, res) => {
             <meta charset="UTF-8">
             <meta http-equiv="refresh" content="3"> <!-- Actualización en tiempo real -->
             <title>Monitor</title>
-            <link rel="stylesheet" href="/coordinador-styles.css">
+            <link rel="stylesheet" href="/styles.css">
         </head>
         <body>
             <div class="container">
@@ -1360,7 +1294,6 @@ app.get("/monitor", (req, res) => {
                     <a href="/logs">📋 Logs</a>
                     <a href="/messages">💬 Mensajes</a>
                     <a href="/election">🗳️ Elección</a>
-                    <a href="/tareas">🧮 Tareas</a>
                     <a href="/panel">🪳 Panel Miniserver</a>
                 </nav>
 
@@ -1398,10 +1331,11 @@ app.get("/monitor", (req, res) => {
                     <p>Estado: <strong>${paused ? "💀 detenido manualmente" : "🟢 activo"}</strong></p>
                     <p>Rol: <strong>${role}</strong></p>
                     <p>Líder: ${leaderId ? `${leaderId} → ${leaderUrl}` : "sin líder"}</p>
-                    <p>Peers: ${Object.values(peers)
-            .map(p => `${p.alive ? "🟢" : "🔴"} ${p.id || "?"} (${p.url})`)
-            .join(" · ") || "ninguno conocido"
-        }</p>
+                    <p>Peers: ${
+                        Object.values(peers)
+                            .map(p => `${p.alive ? "🟢" : "🔴"} ${p.id || "?"} (${p.url})`)
+                            .join(" · ") || "ninguno conocido"
+                    }</p>
                 </div>
             </div>
         </body>
@@ -1456,7 +1390,7 @@ app.get("/messages", (req, res) => {
             <meta charset="UTF-8">
             <meta http-equiv="refresh" content="3"> <!-- Actualización en tiempo real -->
             <title>Mensajes recibidos</title>
-            <link rel="stylesheet" href="/coordinador-styles.css">
+            <link rel="stylesheet" href="/styles.css">
         </head>
         <body>
             <div class="container">
@@ -1466,7 +1400,6 @@ app.get("/messages", (req, res) => {
                     <a href="/monitor">📊 Monitor</a>
                     <a href="/logs">📋 Logs</a>
                     <a href="/election">🗳️ Elección</a>
-                    <a href="/tareas">🧮 Tareas</a>
                     <a href="/panel">🪳 Panel Miniserver</a>
                 </nav>
 
@@ -1501,7 +1434,7 @@ app.get("/logs", (req, res) => {
             <meta charset="UTF-8">
             <meta http-equiv="refresh" content="3"> <!-- Actualización en tiempo real -->
             <title>Logs</title>
-            <link rel="stylesheet" href="/coordinador-styles.css">
+            <link rel="stylesheet" href="/styles.css">
         </head>
         <body>
             <div class="container">
@@ -1511,7 +1444,6 @@ app.get("/logs", (req, res) => {
                     <a href="/monitor">📊 Monitor</a>
                     <a href="/messages">💬 Mensajes</a>
                     <a href="/election">🗳️ Elección</a>
-                    <a href="/tareas">🧮 Tareas</a>
                     <a href="/panel">🪳 Panel Miniserver</a>
                 </nav>
 
@@ -1525,405 +1457,27 @@ app.get("/logs", (req, res) => {
 
 
 // ==========================================
-// DETECCIÓN DE SERVIDORES CAÍDOS
+// DETECCIÓN DE SERVIDORES CAÍDOS (MODIFICADO)
 // ==========================================
-// Un worker que lleva más de PULSE_TIMEOUT sin pulsar pasa a offline.
 
 setInterval(() => {
     const now = Date.now()
+    const timeout = 15000
 
     Object.keys(servers).forEach(name => {
-        if (now - servers[name].lastHeartbeat > PULSE_TIMEOUT && servers[name].status !== "offline") {
-
+        // Chequeamos si superó el timeout y si no estaba YA en estado offline
+        if (now - servers[name].lastHeartbeat > timeout && servers[name].status !== "offline") {
+            
             console.log(`server ${name} timed out. Cambiando estado a OFFLINE...`)
 
-            addLog("WARNING", "TIMEOUT", name, `El servidor dejó de enviar Pulse por más de ${PULSE_TIMEOUT / 1000}s, se marcó como offline`)
-
+            addLog("WARNING", "TIMEOUT", name, "El servidor dejó de enviar Pulse, se marcó como offline")
+            
+            // Reemplazamos la eliminación por un simple cambio de estado
             servers[name].status = "offline"
+
         }
     })
-}, 1000)
-
-
-// ==========================================
-// TAREAS (Coordinator -> Worker -> Coordinator)
-// ==========================================
-// Flujo:
-//   1. El coordinador llama  POST {worker}/task/assign   (endpoint del WORKER)
-//   2. El worker responde 202, espera ~2s (lag simulado), calcula
-//   3. El worker llama       POST {líder}/task/receive   (endpoint de ESTE archivo)
-
-let tasks = {}   // taskId -> { taskId, worker, type, payload, status, result, error, assignedAt, finishedAt }
-let nextTaskId = 1
-
-// ---- CAPACIDADES DE LOS WORKERS ----
-// Cada worker dice qué tareas sabe hacer en GET /task/capabilities. Lo
-// consultamos al registrarse, con cada pulso si los datos tienen más de
-// CAPABILITIES_REFRESH_MS, y a demanda. Se guarda en servers[name].capabilities
-// (arreglo de tipos) o null si todavía no lo sabemos.
-const KNOWN_TASK_TYPES = ["math_compute", "http_fetch", "search_text", "stats_compute", "vector_distance", "http_latency", "text_transform"]
-const CAPABILITIES_REFRESH_MS = 30000
-
-// Acepta varios formatos, porque cada equipo puede responder distinto:
-//   Norma estandarizada: { worker: "...", capabilities: ["t1", "t2"], schemas: { "t1": { description, payload, expectedResult } } }
-//   Formatos alternativos: ["math_compute", ...] | [{ type }, ...] | { capabilities|tasks|types: [...] }
-function parseCapabilities(data) {
-    let list = Array.isArray(data) ? data : null
-
-    if (!list && data && typeof data === "object") {
-        if (data.schemas && typeof data.schemas === "object" && !Array.isArray(data.schemas)) {
-            const keys = Object.keys(data.schemas)
-            if (keys.length > 0) return keys
-        }
-        // Buscar cualquier propiedad que sea un arreglo no vacío
-        list = data.capabilities || data.tasks || data.types || data.supported || data.details
-    }
-
-    if (!Array.isArray(list)) return null
-
-    const types = list
-        .map(item => (typeof item === "string" ? item : item && (item.type || item.name)))
-        .filter(t => typeof t === "string" && t.trim())
-        .map(t => t.trim())
-
-    return types.length ? [...new Set(types)] : null
-}
-
-// Extrae el esquema y detalles de cada tarea anunciada por el worker
-function parseCapabilitiesDetails(data) {
-    if (!data) return []
-
-    // 1. Norma estandarizada: propiedad 'schemas' como objeto map { "tarea": { description, payload, expectedResult } }
-    if (data.schemas && typeof data.schemas === "object" && !Array.isArray(data.schemas)) {
-        return Object.entries(data.schemas).map(([type, s]) => {
-            if (!s || typeof s !== "object") return null
-            return {
-                type: type.trim(),
-                description: s.description || "",
-                payload: s.payload || {},
-                samplePayload: s.payload || null,
-                result: s.expectedResult || s.result || null
-            }
-        }).filter(Boolean)
-    }
-
-    // 2. Formatos con listas de objetos
-    let list = null
-    if (Array.isArray(data.details)) {
-        list = data.details
-    } else if (Array.isArray(data.capabilities) && typeof data.capabilities[0] === "object") {
-        list = data.capabilities
-    } else if (Array.isArray(data.tasks) && typeof data.tasks[0] === "object") {
-        list = data.tasks
-    } else if (Array.isArray(data) && typeof data[0] === "object") {
-        list = data
-    }
-
-    if (!list) return []
-
-    return list.map(item => {
-        if (!item || typeof item !== "object") return null
-        const type = item.type || item.name
-        if (!type || typeof type !== "string") return null
-        return {
-            type: type.trim(),
-            description: item.description || "",
-            payload: item.payload || {},
-            samplePayload: item.samplePayload || null,
-            result: item.result || null
-        }
-    }).filter(Boolean)
-}
-
-async function refreshCapabilities(name) {
-    const worker = servers[name]
-    if (!worker || worker.capabilitiesBusy) return
-
-    worker.capabilitiesBusy = true
-
-    try {
-        const { data } = await axios.get(`${normalizeUrl(worker.url)}/task/capabilities`, {
-            timeout: 5000,
-            headers: REMOTE_HEADERS
-        })
-
-        console.log(`[CAPABILITIES] ${name} respondió:`, JSON.stringify(data).slice(0, 300))
-
-        const types = parseCapabilities(data)
-        if (!types) {
-            // Formato desconocido: guardamos el error pero no tiramos excepción
-            const rawKeys = data && typeof data === "object" ? Object.keys(data).join(", ") : typeof data
-            const detail = `Formato desconocido (claves: ${rawKeys}). Se necesita { capabilities|tasks|types: [...] }`
-            console.warn(`[CAPABILITIES] ${name}: ${detail}`)
-            worker.capabilitiesError = detail
-            worker.capabilitiesCheckedAt = Date.now()
-            worker.capabilitiesBusy = false
-            addLog("WARNING", "CAPABILITIES", name, detail)
-            return
-        }
-
-        const details = parseCapabilitiesDetails(data)
-
-        if (JSON.stringify(worker.capabilities) !== JSON.stringify(types)) {
-            addLog("INFO", "CAPABILITIES", name, `Soporta: ${types.join(", ") || "ninguna tarea"}`)
-        }
-        worker.capabilities = types
-        worker.capabilitiesDetails = details
-        worker.capabilitiesError = null
-    } catch (error) {
-        const detail = explainRemoteError(error)
-        if (worker.capabilitiesError !== detail) {
-            addLog("WARNING", "CAPABILITIES", name, `No se pudieron consultar sus capacidades: ${detail}`)
-        }
-        worker.capabilitiesError = detail
-    } finally {
-        worker.capabilitiesCheckedAt = Date.now()
-        worker.capabilitiesBusy = false
-    }
-}
-
-// Elige un worker online que sepa hacer `type`, el que tenga menos tareas pendientes.
-// Si ninguno confirmó soportarla, usa los que aún no reportan capacidades.
-function pickWorker(type) {
-    const pending = name => Object.values(tasks).filter(t => t.worker === name && t.status === "assigned").length
-    const online = Object.values(servers).filter(w => w.status === "online")
-
-    const confirmed = online.filter(w => w.capabilities && w.capabilities.includes(type))
-    const pool = confirmed.length ? confirmed : online.filter(w => !w.capabilities)
-
-    if (!pool.length) return null
-    return pool.sort((a, b) => pending(a.name) - pending(b.name))[0].name
-}
-
-function workersView() {
-    return Object.values(servers).map(w => ({
-        name: w.name,
-        url: w.url,
-        status: w.status,
-        lastHeartbeat: w.lastHeartbeat,
-        capabilities: w.capabilities || null,
-        capabilitiesDetails: w.capabilitiesDetails || [],
-        capabilitiesError: w.capabilitiesError || null,
-        capabilitiesCheckedAt: w.capabilitiesCheckedAt || null
-    }))
-}
-
-// Envía una tarea a un worker registrado. Devuelve el registro de la tarea.
-async function assignTask(workerName, type, payload) {
-    const name = String(workerName || "").trim().toLowerCase()
-    const worker = servers[name]
-
-    if (!worker) throw Object.assign(new Error("Worker no registrado"), { status: 404 })
-    if (worker.status !== "online") throw Object.assign(new Error("El worker está offline"), { status: 409 })
-
-    // ¿Sabe hacer esta tarea? Si todavía no conocemos sus capacidades las pedimos ahora.
-    // Si el worker no tiene /task/capabilities (versión vieja), dejamos pasar: él mismo
-    // rechazará el tipo que no soporte.
-    if (!worker.capabilities && Date.now() - (worker.capabilitiesCheckedAt || 0) > 5000) {
-        await refreshCapabilities(name)
-    }
-    if (worker.capabilities && !worker.capabilities.includes(type)) {
-        const soporta = worker.capabilities.join(", ") || "ninguna tarea"
-        throw Object.assign(new Error(`El worker '${name}' no soporta '${type}'. Soporta: ${soporta}`), { status: 409 })
-    }
-
-    const taskId = `task-${NODE_ID}-${nextTaskId++}`
-
-    tasks[taskId] = {
-        taskId,
-        worker: name,
-        type,
-        payload,
-        status: "assigned",
-        result: null,
-        error: null,
-        assignedAt: Date.now(),
-        finishedAt: null
-    }
-
-    const target = `${normalizeUrl(worker.url)}/task/assign`
-
-    try {
-        await axios.post(
-            target,
-            { taskId, type, payload },
-            { timeout: PULSE_TIMEOUT, headers: REMOTE_HEADERS }
-        )
-        addLog("INFO", "TASK_ASSIGNED", name, `${taskId} (${type}) asignada`)
-        return tasks[taskId]
-    } catch (error) {
-        // El worker rechazó la tarea (payload inválido, tipo desconocido...) o no respondió
-        const status = error.response && error.response.status
-        const workerMsg = error.response && error.response.data && error.response.data.error
-        let detail
-
-        if (workerMsg) {
-            // El worker contestó y rechazó la tarea (payload inválido, tipo desconocido...)
-            detail = workerMsg
-        } else if (status === 502 && /ngrok/i.test(String(error.response.data))) {
-            detail = `ngrok recibió la petición pero el worker no contestó (502). Revisa que el túnel apunte al puerto del worker y que el worker esté corriendo. URL usada: ${target}`
-        } else if (status === 404 && !/ngrok/i.test(String(error.response.data))) {
-            detail = `El worker respondió 404: no tiene POST /task/assign (¿versión vieja del worker?). URL usada: ${target}`
-        } else {
-            detail = `${explainRemoteError(error)}. URL usada: ${target}`
-        }
-
-        tasks[taskId].status = "failed"
-        tasks[taskId].error = detail
-        tasks[taskId].finishedAt = Date.now()
-
-        addLog("ERROR", "TASK_ASSIGN", name, `${taskId} no se pudo asignar: ${detail}`)
-        throw Object.assign(new Error(detail), { status: (error.response && error.response.status) || 502 })
-    }
-}
-
-// El worker nos entrega el resultado cuando termina, como mensaje "task-result":
-//   { "type": "task-result", "data": { "taskId": "task-123", "status": "ok",    "result": {} } }
-//   { "type": "task-result", "data": { "taskId": "task-123", "status": "error", "error": "motivo" } }
-// Se acepta aunque este nodo ya no sea el líder o no conozca el taskId (por
-// ejemplo, si el líder cambió mientras la tarea corría): así no se pierde
-// un resultado ya calculado.
-app.post("/task/receive", (req, res) => {
-    const { type, data } = req.body || {}
-
-    if (type !== "task-result" || !data || typeof data !== "object") {
-        addLog("WARNING", "TASK_RECEIVE", "-", "Mensaje inválido: se esperaba { type: 'task-result', data: {...} }")
-        return res.status(400).json({ error: "Se espera { type: 'task-result', data: { taskId, status, result | error } }" })
-    }
-
-    const { taskId, status, result, error } = data
-
-    if (!taskId || typeof taskId !== "string") {
-        addLog("WARNING", "TASK_RECEIVE", "-", "task-result sin taskId")
-        return res.status(400).json({ error: "data.taskId es obligatorio" })
-    }
-
-    if (status !== "ok" && status !== "error") {
-        return res.status(400).json({ error: "data.status debe ser 'ok' o 'error'" })
-    }
-
-    const ok = status === "ok"
-    const previous = tasks[taskId]
-
-    tasks[taskId] = {
-        ...(previous || { taskId, worker: "?", type: "?", assignedAt: null, payload: null }),
-        // Internamente seguimos usando completed/failed (es lo que pinta la página /tareas)
-        status: ok ? "completed" : "failed",
-        result: ok ? (result ?? {}) : null,
-        error: ok ? null : (error || "Error desconocido"),
-        finishedAt: Date.now()
-    }
-
-    const t = tasks[taskId]
-    addLog(
-        ok ? "INFO" : "WARNING",
-        "TASK_RESULT",
-        t.worker,
-        ok
-            ? `${taskId} (${t.type}) ok: ${JSON.stringify(t.result)}${previous ? "" : " [tarea no asignada por este nodo]"}`
-            : `${taskId} (${t.type}) error: ${t.error}${previous ? "" : " [tarea no asignada por este nodo]"}`
-    )
-
-    res.json({ message: "Resultado recibido", taskId })
-})
-
-// ---- Auxiliares (opcionales, para poder disparar y ver tareas) ----
-// Sin esto assignTask() no tiene quién la llame. Bórralas si tu profe
-// solo quiere ver los 3 endpoints de tareas.
-
-// Body: { worker?: "hijo1", type: "math_compute", payload: {...} }
-// Si no se manda 'worker', el coordinador elige uno online que soporte esa tarea.
-app.post("/task/dispatch", async (req, res) => {
-    const { worker, type, payload } = req.body || {}
-
-    if (!type) {
-        return res.status(400).json({ error: "Se requiere 'type'" })
-    }
-
-    let target = worker
-    if (!target) {
-        target = pickWorker(type)
-        if (!target) {
-            return res.status(409).json({ error: `Ningún worker online soporta '${type}'` })
-        }
-    }
-
-    try {
-        const task = await assignTask(target, type, payload)
-        res.status(202).json(task)
-    } catch (error) {
-        res.status(error.status || 500).json({ error: error.message })
-    }
-})
-
-// Página para asignar tareas (public/coordinador-tareas.html + public/coordinador-tareas.js)
-app.get("/tareas", (req, res) => {
-    res.sendFile(path.join(__dirname, "public", "coordinador-tareas.html"))
-})
-
-// Workers registrados en ESTE coordinador, para llenar el selector de la página
-app.get("/task/workers", (req, res) => {
-    res.json(workersView())
-})
-
-// Catálogo agrupado de capacidades de todos los workers online
-app.get("/task/capabilities", (req, res) => {
-    const catalog = {}
-    Object.values(servers).filter(w => w.status === "online").forEach(w => {
-        (w.capabilitiesDetails || []).forEach(d => {
-            if (!catalog[d.type]) {
-                catalog[d.type] = {
-                    type: d.type,
-                    description: d.description,
-                    payload: d.payload,
-                    samplePayload: d.samplePayload || null,
-                    result: d.result || null,
-                    workers: []
-                }
-            }
-            if (!catalog[d.type].workers.includes(w.name)) {
-                catalog[d.type].workers.push(w.name)
-            }
-        })
-    })
-
-    res.json({
-        capabilities: Object.keys(catalog),
-        details: Object.values(catalog)
-    })
-})
-
-app.get("/task/catalog", (req, res) => {
-    const catalog = {}
-    Object.values(servers).filter(w => w.status === "online").forEach(w => {
-        (w.capabilitiesDetails || []).forEach(d => {
-            if (!catalog[d.type]) {
-                catalog[d.type] = {
-                    type: d.type,
-                    description: d.description,
-                    payload: d.payload,
-                    samplePayload: d.samplePayload || null,
-                    result: d.result || null,
-                    workers: []
-                }
-            }
-            if (!catalog[d.type].workers.includes(w.name)) {
-                catalog[d.type].workers.push(w.name)
-            }
-        })
-    })
-    res.json(catalog)
-})
-
-// Vuelve a preguntarle sus capacidades a todos los workers online y devuelve la lista
-app.post("/task/workers/refresh", async (req, res) => {
-    await Promise.all(Object.keys(servers).filter(n => servers[n].status === "online").map(refreshCapabilities))
-    res.json(workersView())
-})
-
-app.get("/task/results", (req, res) => {
-    res.json(Object.values(tasks).sort((a, b) => (b.assignedAt || 0) - (a.assignedAt || 0)))
-})
+}, 10000)
 
 
 // ==========================================
@@ -1936,7 +1490,7 @@ app.listen(PORT, () => {
     addLog("INFO", "START", NODE_ID, `Nodo ${NODE_ID} iniciado en puerto ${PORT} (${SELF_URL})`)
 
     // Semillas: basta con apuntar al de al lado, el gossip hace el resto
-    const seeds = (process.env.PEERS || SEEDS_CLI || process.argv[5] || "")
+    const seeds = (process.env.PEERS || process.argv[5] || "")
         .split(",")
         .map(s => s.trim())
         .filter(Boolean)
