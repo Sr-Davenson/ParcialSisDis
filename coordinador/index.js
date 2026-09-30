@@ -10,7 +10,7 @@ function normalizeUrl(url) {
 // Todos los IDs que entran por red pasan por acá antes de guardarse
 function normalizeId(id) {
     if (id === null || id === undefined) return null
-    const clean = String(id).trim().toUpperCase()
+    const clean = String(id).trim().toLowerCase()
     return clean || null
 }
 
